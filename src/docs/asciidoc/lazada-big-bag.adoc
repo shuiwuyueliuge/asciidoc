@@ -1,0 +1,181 @@
+= lazada组大包开发说明
+:toc: left
+:toc-title: 目录
+:toclevels: 4
+
+*更新说明*
+[format="csv", options="header"]
+|===
+更新时间,更新内容,更新人员
+2020-09-27,文档编写,李超
+|===
+
+== 1. 业务说明
+
+....
+lazada卖家把小包裹信息提交到lazada平台组成大包，通过自寄/官方揽收的方式发送到官方的揽收仓。
+....
+
+== 2. 流程图
+
+*つづく*
+
+== 3. 数据库设计
+
+*lazada 大包信息*
+
+[source,sql]
+----
+CREATE TABLE `lazada_big_bag` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `user_id` bigint(20) DEFAULT NULL,
+  `creator` varchar(32) CHARACTER SET utf8 NOT NULL,
+  `gmt_create` datetime NOT NULL,
+  `modifier` varchar(32) CHARACTER SET utf8 NOT NULL,
+  `gmt_modified` datetime NOT NULL,
+  `is_deleted` char(1) CHARACTER SET utf8 NOT NULL,
+  `logistics_name` varchar(50) DEFAULT NULL COMMENT '包裹名称',
+  `send_addr` varchar(50) DEFAULT NULL COMMENT '揽收仓库',
+  `type` varchar(20) DEFAULT NULL COMMENT '揽收方式',
+  `weight` varchar(10) DEFAULT NULL COMMENT '预估重量',
+  `logistics_num` int(11) DEFAULT '0' COMMENT '包裹数量',
+  `status` varchar(20) DEFAULT NULL COMMENT '状态 wait_submit 待提交,submit_fail 提交失败，wait_print 待打印，wait_check_out 待出库，check_out已出库',
+  `handover_order_id` varchar(20) DEFAULT NULL COMMENT '交接单ID',
+  `handover_content_id` varchar(20) DEFAULT NULL COMMENT '大包LP号',
+  `handover_content_code` varchar(20) DEFAULT NULL COMMENT '大包运单号',
+  `tracking_number` varchar(20) DEFAULT '' COMMENT '物流编号',
+  `progress_status` varchar(10) DEFAULT NULL COMMENT '流程状态 create 创建, wait_take 待揽收，check_out出库',
+  `return_city` varchar(10) DEFAULT NULL COMMENT '退件信息',
+  `return_province` varchar(10) DEFAULT NULL COMMENT '揽收信息',
+  `return_street` varchar(255) DEFAULT NULL,
+  `return_district` varchar(255) DEFAULT NULL,
+  `return_detail_address` varchar(255) DEFAULT NULL,
+  `return_mobile` varchar(255) DEFAULT NULL,
+  `return_name` varchar(255) DEFAULT NULL,
+  `return_addr_id` varchar(50) DEFAULT NULL,
+  `pickup_info_id` varchar(50) DEFAULT NULL,
+  `pickup_city` varchar(10) DEFAULT NULL COMMENT '退件信息',
+  `pickup_province` varchar(10) DEFAULT NULL COMMENT '揽收信息',
+  `pickup_street` varchar(255) DEFAULT NULL,
+  `pickup_district` varchar(255) DEFAULT NULL,
+  `pickup_detail_address` varchar(255) DEFAULT NULL,
+  `pickup_mobile` varchar(255) DEFAULT NULL,
+  `pickup_name` varchar(255) DEFAULT NULL,
+  `online_status` varchar(50) DEFAULT NULL COMMENT '大包线上状态',
+  `actual_weight` varchar(10) DEFAULT NULL COMMENT '真实重量',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=1802 DEFAULT CHARSET=utf8mb4 COMMENT='lazada 大包信息';
+----
+
+*lazada 大包详细信息*
+
+[source,sql]
+----
+CREATE TABLE `lazada_big_bag_item` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `user_id` bigint(20) DEFAULT NULL,
+  `auth_alias` varchar(200) DEFAULT NULL,
+  `creator` varchar(32) CHARACTER SET utf8 NOT NULL,
+  `gmt_create` datetime NOT NULL,
+  `modifier` varchar(32) CHARACTER SET utf8 NOT NULL,
+  `gmt_modified` datetime NOT NULL,
+  `is_deleted` char(1) CHARACTER SET utf8 NOT NULL,
+  `big_bag_id` bigint(20) DEFAULT '0' COMMENT '大包表id',
+  `package_id` varchar(20) DEFAULT NULL COMMENT '包裹号',
+  `order_id` varchar(25) DEFAULT NULL COMMENT '订单号',
+  `logistics_service_name` varchar(50) DEFAULT NULL COMMENT '发货渠道',
+  `logistics_no` varchar(20) DEFAULT NULL COMMENT '运单号',
+  `seller_id` varchar(100) DEFAULT NULL,
+  `country` varchar(10) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2434 DEFAULT CHARSET=utf8mb4 COMMENT='lazada 小包信息';
+----
+
+== 4. 业务理解&实现方式
+
+=== 4.1 关于大包的状态说明
+
+[format="csv", options="header"]
+|===
+流程状态,具体状态,线上状态,备注
+create 创建,wait_submit 待提交 submit_fail 提交失败,,可以修改全部信息
+wait_take 待揽收,wait_print 待打印 wait_check_out 待出库,已提交|待分配大包单号|待司机揽收,只能修改小包裹信息，地址信息不能修改
+check_out 出库,check_out已出库,已揽收,不能修改任何信息，只能看看
+|===
+
+=== 4.2 https://open.lazada.com/doc/api.htm?spm=a2o9m.11193535.0.0.151c38e4vd1AUp#/api?cid=6&path=/logistics/cnpms/bigbag/commit[创建大包]
+
+==== 4.2.1 小包裹的筛选条件
+
+. 小包裹的状态是 `*已出库*` 和 `*已发货*`
+. 小包裹得物流渠道必须是 *官方的LGS* (到2020-09-27为止已知的国内官方揽收仓为 `*LGS-FM40(深圳)*` 和 `*LGS-FM41(义乌)*`)
+. 一个大包内小包的物流渠道必须一致
+. 单个大包最多装300个小包，不能超过50KG，单边长度小于120CM，三边总长不超过180CM
+
+==== 4.2.2 开发注意事项
+
+退件信息和揽收信息::
+统一管理在芒果店长 *物流 > 寄件人地址模板* 模板类型为 *Lazada组包地址模板* 中。填写相应的信息之后创建模板会调用lazada的
+https://open.lazada.com/doc/api.htm?spm=a2o9m.11193535.0.0.151c38e4vd1AUp#/api?cid=6&path=/logistics/cnpms/address/query[获取标准地址库id]接口
+并保存到mysql[*sm_sender_info_template*]表中的return_addr_id：lazada大包退件地址和pickup_addr_id：lazada大包揽收地址。
+上述接口的调用时机为 *Lazada组包地址模板* 和 *提交大包* (用户不指定物流模板采用手填地址信息的时候会调用)。
+
+主账号店铺和AIP接口文档中的域名::
+根据lazada对接相关人员的描述跨店铺组包需要先调用
+https://open.lazada.com/doc/api.htm?spm=a2o9m.11193535.0.0.151c38e4vd1AUp#/api?cid=6&path=/logistics/cnpms/bigbag/query[商家授权，实现跨店铺组包]接口
+才能进行跨店铺组包。上述接口的调用时机为在用户创建 *Lazada组包地址模板* (获取地址id) 和 *提交大包* (采用手填地址)。实现策略是从mongodb[*lazadaMainAccountTemplate*]
+集合中查询该用户有没有主账号的记录，如果没有就从mysql中获取该用户所有可用的店铺，已查询到的第一个为主账号其余的为子账号调用
+https://open.lazada.com/doc/api.htm?spm=a2o9m.11193535.0.0.151c38e4vd1AUp#/api?cid=6&path=/logistics/cnpms/bigbag/query[商家授权，实现跨店铺组包]
+接口进行授权组包，成功之后记录。
+主账号到mongodb中。
+
+官方文档的问题::
+到2020-09-27日为止，提交大包接口响应参数缺少[*trackingNumber大包运单号*]字段。
+
+=== 4.3 修改大包信息
+
+[TIP]
+====
+注意大包状态，状态为wait_take会先调用
+https://open.lazada.com/doc/api.htm?spm=a2o9m.11193535.0.0.151c38e4vd1AUp#/api?cid=6&path=/logistics/cnpms/bigbag/update[修改大包信息]接口提交到平台
+====
+
+=== 4.4 删除大包
+
+[TIP]
+====
+注意大包状态，状态为wait_take会先调用
+https://open.lazada.com/doc/api.htm?spm=a2o9m.11193535.0.0.151c38e4vd1AUp#/api?cid=6&path=/logistics/cnpms/bigbag/cancel[删除大包]接口提交到平台，
+本地大包状态改为wait_submit 待提交
+====
+
+=== 4.5 使用到的websocket异步接口
+
+. 提交大包
+. 批量删除已提交的大包
+. 同步大包状态
+. 批量获取面单pdf
+
+=== 4.6 lazadaApi接口的调用记录
+
+物化::
+调用的信息保存在mongodb[*lazadaBigBagTemplate*]中。
+[format="csv", options="header"]
+|===
+字段,备注
+siteName,主账号店铺所属国家
+request,请求报文
+response,成功的响应报文
+msg,失败的响应报文
+url,请求地址
+action,触发此调用的场景
+time,调用时间
+|===
+
+芒果店长查看路径::
+*つづく*
+
+== 5. 关于API测试
+
+*由于lazada api只有正式环境没有测试环境，所以只能线上测试正常的数据，对于本地测试只能固定aip的响应结果走通本地流程。
+2020-09-27测试使用的策略为正常和非正常方式(随机数50%的概率改写api返回数据为成功)。*
